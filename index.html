@@ -4498,6 +4498,47 @@
         svc.audit(actorId, "module.duplicate", `Duplikasi ${b.module.code} → ${nm.code}`);
         return nm;
       },
+      duplicateProgram(programId, actorId) {
+        const p = db.get("programs", programId);
+        if (!p) return null;
+        const seq = db.list("programs").length + 1;
+        const nm = db.insert("programs", Object.assign({}, p, {
+          id: `PRG-${String(seq).padStart(3, "0")}`,
+          code: `PRG-${String(seq).padStart(3, "0")}`,
+          name: `${p.name} (Copy)`
+        }));
+        svc.audit(actorId, "program.duplicate", `Duplikasi program ${p.code} → ${nm.code}`);
+        return nm;
+      },
+      duplicateClass(classId, actorId) {
+        const c = db.get("classes", classId);
+        if (!c) return null;
+        const seq = db.list("classes").length + 1;
+        const newId = `CLS-${String(seq).padStart(4, "0")}`;
+        const nm = db.insert("classes", Object.assign({}, c, {
+          id: newId,
+          code: newId,
+          name: `${c.name} (Copy)`,
+          status: "ready"
+        }));
+        svc.audit(actorId, "class.duplicate", `Duplikasi kelas ${c.code} → ${nm.code}`);
+        return nm;
+      },
+      resetClass(classId, actorId) {
+        const c = db.get("classes", classId);
+        if (!c) return false;
+        
+        db.removeWhere("class_participants", { class_id: classId });
+        db.removeWhere("attendance", { class_id: classId });
+        db.removeWhere("submissions", { class_id: classId });
+        db.removeWhere("assessment_attempts", { class_id: classId });
+        db.removeWhere("assessment_answers", { class_id: classId });
+        db.removeWhere("journey", { class_id: classId });
+        db.removeWhere("nps_responses", { class_id: classId });
+        
+        svc.audit(actorId, "class.reset", `Kelas ${c.code} di-reset (semua progres & peserta dihapus)`);
+        return true;
+      },
       bumpVersion(moduleId, actorId) {
         const m = svc.module(moduleId);
         const v = (parseFloat(m.version) + 0.1).toFixed(1);
@@ -10492,7 +10533,9 @@
       c,
       onOpen,
       selected,
-      onSelect
+      onSelect,
+      onDuplicate,
+      onReset
     }) {
       const st = svc.classStats(c.id);
       const r = svc.readiness(c.module_id);
@@ -10627,7 +10670,16 @@
         value: r.score,
         tone: r.rule.tone === "good" ? "good" : r.rule.tone === "warn" ? "warn" : "crit",
         slim: true
-      }))));
+      }), (onDuplicate || onReset) && /*#__PURE__*/React.createElement("div", {
+        className: "row",
+        style: { marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--line-2)", gap: 8, justifyContent: "flex-end" }
+      }, onDuplicate && /*#__PURE__*/React.createElement(Btn, {
+        size: "xs", kind: "ghost", icon: "copy",
+        onClick: e => { e.stopPropagation(); onDuplicate(c); }
+      }, "Duplikat"), onReset && /*#__PURE__*/React.createElement(Btn, {
+        size: "xs", kind: "ghost", icon: "trash", style: { color: "var(--crit-ink)" },
+        onClick: e => { e.stopPropagation(); onReset(c); }
+      }, "Reset")))));
     }
     function ReviewSubmissionModal({
       sub,
@@ -11692,7 +11744,11 @@
               /*#__PURE__*/React.createElement("span", { className: "dim" }, "Kesiapan modul program"),
               /*#__PURE__*/React.createElement("span", { className: "mono" }, pct(ready, mods.length || 1), "%")),
             /*#__PURE__*/React.createElement(Progress, { value: pct(ready, mods.length || 1) })),
-          /*#__PURE__*/React.createElement("div", { style: { marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--line-2)", textAlign: "right" } },
+          /*#__PURE__*/React.createElement("div", { style: { marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--line-2)", display: "flex", justifyContent: "flex-end", gap: 8 } },
+            /*#__PURE__*/React.createElement(Btn, { size: "xs", kind: "ghost", icon: "copy", onClick: () => {
+              const nm = svc.duplicateProgram(p.id, user.employee_id);
+              if (nm) { toast(`Program disalin menjadi ${nm.code}`); refresh(); }
+            } }, "Duplikat"),
             /*#__PURE__*/React.createElement(Btn, { size: "xs", kind: "ghost", icon: "trash", onClick: () => setDelP(p), style: { color: "var(--crit-ink)" } }, "Hapus program")));
         })),
         showAdd && /*#__PURE__*/React.createElement(NewProgramModal, { onClose: () => setShowAdd(false), onSave: doAddProgram }),
@@ -11947,6 +12003,7 @@
       const [st, setSt] = useState("all");
       const [sel, setSel] = useState({});
       const [delClass, setDelClass] = useState(false);
+      const [resetC, setResetC] = useState(null);
       let classes = db.list("classes");
       if (st !== "all") classes = classes.filter(c => c.status === st);
       const selCount = Object.keys(sel).filter(k => sel[k]).length;
@@ -12027,7 +12084,12 @@
         onSelect: v => setSel(p => Object.assign({}, p, { [c.id]: v })),
         onOpen: () => nav("a-monitor", {
           id: c.id
-        })
+        }),
+        onDuplicate: c => {
+          const nm = svc.duplicateClass(c.id, user.employee_id);
+          if (nm) { toast(`Kelas disalin menjadi ${nm.code}`); refresh(); }
+        },
+        onReset: c => setResetC(c)
       }))), create && /*#__PURE__*/React.createElement(NewClassModal, {
         onClose: () => setCreate(false)
       }), importCls && /*#__PURE__*/React.createElement(ImportClassesModal, {
@@ -12060,7 +12122,28 @@
         }, "Ya, hapus permanen"))
       }, /*#__PURE__*/React.createElement("p", {
         style: { fontSize: 14, lineHeight: 1.7 }
-      }, "Anda akan menghapus ", /*#__PURE__*/React.createElement("b", null, selCount, " kelas"), " sekaligus. Seluruh data peserta, absensi, nilai pre/post-test, dan submission terkait kelas-kelas tersebut akan ikut terhapus. Yakin ingin melanjutkan?")));
+      }, "Anda akan menghapus ", /*#__PURE__*/React.createElement("b", null, selCount, " kelas"), " sekaligus. Seluruh data peserta, absensi, nilai pre/post-test, dan submission terkait kelas-kelas tersebut akan ikut terhapus. Yakin ingin melanjutkan?")),
+      resetC && /*#__PURE__*/React.createElement(Modal, {
+        title: "Konfirmasi Reset Kelas",
+        sub: "Tindakan ini tidak dapat dibatalkan",
+        onClose: () => setResetC(null),
+        footer: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Btn, {
+          onClick: () => setResetC(null)
+        }, "Batal"), /*#__PURE__*/React.createElement(Btn, {
+          kind: "danger",
+          icon: "trash",
+          onClick: () => {
+            const ok = svc.resetClass(resetC.id, user.employee_id);
+            if (ok) {
+              toast(`Kelas ${resetC.code} berhasil di-reset`);
+              setResetC(null);
+              refresh();
+            }
+          }
+        }, "Ya, hapus semua data peserta"))
+      }, /*#__PURE__*/React.createElement("p", {
+        style: { fontSize: 14, lineHeight: 1.7 }
+      }, "Anda akan me-reset kelas ", /*#__PURE__*/React.createElement("b", null, resetC.name), ". ", /*#__PURE__*/React.createElement("br", null), "Seluruh data peserta, absensi, nilai pre/post-test, dan hasil kerja kelas ini akan dihapus. Pengaturan kelas (fasilitator, jadwal, kuota) akan tetap ada.", /*#__PURE__*/React.createElement("br", null), "Yakin ingin melanjutkan?")));
     }
     /* --------------------------------------------------------- module library */
     function ModulePreviewModal({
